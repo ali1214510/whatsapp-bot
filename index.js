@@ -525,6 +525,10 @@ function listenToNewOrders() {
 }
 
 // Express API Routes for Admin UI & Control
+app.get('/', (req, res) => {
+    res.redirect('/qr');
+});
+
 app.get('/status', (req, res) => {
     res.json({
         connected: isConnected,
