@@ -589,10 +589,10 @@ app.get('/qr', (req, res) => {
 
 // Trigger sending message manually for any order from Portal
 app.post('/send-order-message', async (req, res) => {
-    const { orderId } = req.body;
+    const { orderId, isManual } = req.body;
     if (!orderId) return res.status(400).json({ error: 'orderId is required' });
 
-    const result = await sendOrderConfirmationWhatsApp(orderId, true);
+    const result = await sendOrderConfirmationWhatsApp(orderId, !!isManual);
     res.json(result);
 });
 
