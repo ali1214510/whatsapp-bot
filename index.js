@@ -353,8 +353,8 @@ async function startWhatsAppBot() {
     });
 }
 
-// Function to Send Automated Order Confirmation Request Message with Product Image & COD Amount
-async function sendOrderConfirmationWhatsApp(orderId) {
+// Function to Send Automated Order Confirmation
+async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
     if (!waSock || !isConnected) {
         console.warn('⚠️ Cannot send WhatsApp message: Bot is not connected yet.');
         return { success: false, error: 'WhatsApp Bot not connected' };
@@ -382,7 +382,7 @@ async function sendOrderConfirmationWhatsApp(orderId) {
         }
 
         // Check if WhatsApp confirmation service is enabled for this seller/user
-        if (order.user_id) {
+        if (!isManualTrigger && order.user_id) {
             const { data: userProfile } = await supabase
                 .from('profiles')
                 .select('whatsapp_confirmation_enabled')
@@ -592,7 +592,7 @@ app.post('/send-order-message', async (req, res) => {
     const { orderId } = req.body;
     if (!orderId) return res.status(400).json({ error: 'orderId is required' });
 
-    const result = await sendOrderConfirmationWhatsApp(orderId);
+    const result = await sendOrderConfirmationWhatsApp(orderId, true);
     res.json(result);
 });
 
