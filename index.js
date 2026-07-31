@@ -381,6 +381,20 @@ async function sendOrderConfirmationWhatsApp(orderId) {
             return { success: false, error: 'Order not found in database' };
         }
 
+        // Check if WhatsApp confirmation service is enabled for this seller/user
+        if (order.user_id) {
+            const { data: userProfile } = await supabase
+                .from('profiles')
+                .select('whatsapp_confirmation_enabled')
+                .eq('id', order.user_id)
+                .maybeSingle();
+
+            if (!userProfile?.whatsapp_confirmation_enabled) {
+                console.log(`⚠️ WhatsApp confirmation is DISABLED for user ${order.user_id}. Skipping automatic message.`);
+                return { success: false, reason: 'Disabled for user' };
+            }
+        }
+
         // Deduplication Check: Skip if initial message was already sent for this order
         const { data: existingMsg } = await supabase
             .from('whatsapp_messages')
