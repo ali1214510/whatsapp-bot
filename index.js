@@ -361,23 +361,24 @@ async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
     }
 
     try {
-        let { data: order } = await supabase
-            .from('orders')
-            .select('*')
-            .eq('id', orderId)
-            .maybeSingle();
-
-        if (!order) {
-            const { data: orderByNum } = await supabase
+        let order = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const { data: o } = await supabase
                 .from('orders')
                 .select('*')
-                .eq('order_number', orderId)
+                .or(`id.eq.${orderId},order_number.eq.${orderId}`)
                 .maybeSingle();
-            order = orderByNum;
+
+            if (o) {
+                order = o;
+                break;
+            }
+            // Wait 1.5s for database indexing if order was just created
+            await new Promise((resolve) => setTimeout(resolve, 1500));
         }
 
         if (!order) {
-            console.error(`Order not found for ID or Order Number: ${orderId}`);
+            console.error(`Order not found for ID or Order Number after retries: ${orderId}`);
             return { success: false, error: 'Order not found in database' };
         }
 
