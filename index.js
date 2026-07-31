@@ -353,12 +353,44 @@ async function startWhatsAppBot() {
     });
 }
 
+// Lock Set to prevent concurrent duplicate message sending for the same order
+const processingOrders = new Set();
+
+// Helper to check if WhatsApp service is enabled for user via RLS-bypassing RPC
+async function isUserWhatsAppEnabled(userId) {
+    if (!userId) return false;
+    try {
+        const { data, error } = await supabase.rpc('check_whatsapp_confirmation_enabled', { target_user_id: userId });
+        if (!error && typeof data === 'boolean') {
+            return data;
+        }
+    } catch (e) {
+        console.warn('RPC check warning:', e.message);
+    }
+    const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('whatsapp_confirmation_enabled')
+        .eq('id', userId)
+        .maybeSingle();
+    return Boolean(userProfile?.whatsapp_confirmation_enabled);
+}
+
 // Function to Send Automated Order Confirmation
 async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
     if (!waSock || !isConnected) {
         console.warn('⚠️ Cannot send WhatsApp message: Bot is not connected yet.');
         return { success: false, error: 'WhatsApp Bot not connected' };
     }
+
+    if (!orderId) return { success: false, error: 'orderId is required' };
+
+    // Prevent concurrent duplicate executions for the same orderId
+    if (processingOrders.has(orderId)) {
+        console.log(`⏳ Order #${orderId} is currently being processed by another trigger. Skipping duplicate.`);
+        return { success: true, message: 'Already processing' };
+    }
+
+    processingOrders.add(orderId);
 
     try {
         const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(orderId);
@@ -381,25 +413,6 @@ async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
             console.error(`Order not found for ID or Order Number after retries: ${orderId}`);
             return { success: false, error: 'Order not found in database' };
         }
-
-// Helper to check if WhatsApp service is enabled for user via RLS-bypassing RPC
-async function isUserWhatsAppEnabled(userId) {
-    if (!userId) return false;
-    try {
-        const { data, error } = await supabase.rpc('check_whatsapp_confirmation_enabled', { target_user_id: userId });
-        if (!error && typeof data === 'boolean') {
-            return data;
-        }
-    } catch (e) {
-        console.warn('RPC check warning:', e.message);
-    }
-    const { data: userProfile } = await supabase
-        .from('profiles')
-        .select('whatsapp_confirmation_enabled')
-        .eq('id', userId)
-        .maybeSingle();
-    return Boolean(userProfile?.whatsapp_confirmation_enabled);
-}
 
         // Check if WhatsApp confirmation service is enabled for this seller/user (only for automatic triggers)
         if (!isManualTrigger && order.user_id) {
@@ -528,6 +541,10 @@ async function isUserWhatsAppEnabled(userId) {
     } catch (err) {
         console.error('Error sending order confirmation WhatsApp:', err);
         return { success: false, error: err.message };
+    } finally {
+        setTimeout(() => {
+            processingOrders.delete(orderId);
+        }, 15000);
     }
 }
 
