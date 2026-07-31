@@ -528,15 +528,51 @@ function listenToNewOrders() {
             { event: 'INSERT', schema: 'public', table: 'orders' },
             async (payload) => {
                 const newOrder = payload.new;
-                console.log(`🆕 NEW ORDER RECEIVED: #${newOrder.order_number || newOrder.id} (${newOrder.customer_name})`);
+                console.log(`🆕 NEW ORDER RECEIVED VIA REALTIME: #${newOrder.order_number || newOrder.id} (${newOrder.customer_name})`);
 
-                // Wait 2 seconds then send WhatsApp notification automatically
                 setTimeout(() => {
-                    sendOrderConfirmationWhatsApp(newOrder.id);
-                }, 2000);
+                    sendOrderConfirmationWhatsApp(newOrder.id, false);
+                }, 1500);
             }
         )
-        .subscribe();
+        .subscribe((status) => {
+            console.log(`📡 Realtime new_orders_channel status: ${status}`);
+        });
+}
+
+// Failsafe Automatic Poller: Checks every 10s for new orders from enabled users that need confirmation
+async function autoCheckUnsentOrders() {
+    if (!isConnected || !waSock) return;
+
+    try {
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const { data: recentOrders, error } = await supabase
+            .from('orders')
+            .select('id, user_id, order_number, customer_name, profiles(whatsapp_confirmation_enabled)')
+            .gte('created_at', twoHoursAgo)
+            .order('created_at', { ascending: false });
+
+        if (error || !recentOrders || recentOrders.length === 0) return;
+
+        for (const order of recentOrders) {
+            const isEnabled = order.profiles?.whatsapp_confirmation_enabled;
+            if (!isEnabled) continue;
+
+            const { data: existingMsg } = await supabase
+                .from('whatsapp_messages')
+                .select('id')
+                .eq('order_id', order.id)
+                .limit(1)
+                .maybeSingle();
+
+            if (!existingMsg) {
+                console.log(`🤖 Auto-Poller: Found unsent order #${order.order_number || order.id} for enabled user. Sending automatic WhatsApp message...`);
+                await sendOrderConfirmationWhatsApp(order.id, false);
+            }
+        }
+    } catch (err) {
+        console.error('Error in autoCheckUnsentOrders poller:', err.message);
+    }
 }
 
 // Express API Routes for Admin UI & Control
@@ -678,4 +714,9 @@ app.listen(PORT, () => {
     console.log(`🚀 Deserts WhatsApp Bot Server running on http://localhost:${PORT}`);
     startWhatsAppBot();
     listenToNewOrders();
+
+    // Start 10-second automatic poller for 100% guaranteed automatic messaging
+    setInterval(() => {
+        autoCheckUnsentOrders();
+    }, 10000);
 });
