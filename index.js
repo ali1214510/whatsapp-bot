@@ -381,7 +381,7 @@ async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
             return { success: false, error: 'Order not found in database' };
         }
 
-        // Check if WhatsApp confirmation service is enabled for this seller/user
+        // Check if WhatsApp confirmation service is enabled for this seller/user (only for automatic triggers)
         if (!isManualTrigger && order.user_id) {
             const { data: userProfile } = await supabase
                 .from('profiles')
@@ -592,7 +592,8 @@ app.post('/send-order-message', async (req, res) => {
     const { orderId, isManual } = req.body;
     if (!orderId) return res.status(400).json({ error: 'orderId is required' });
 
-    const result = await sendOrderConfirmationWhatsApp(orderId, !!isManual);
+    const isManualTrigger = isManual !== undefined ? Boolean(isManual) : true;
+    const result = await sendOrderConfirmationWhatsApp(orderId, isManualTrigger);
     res.json(result);
 });
 
