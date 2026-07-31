@@ -361,18 +361,18 @@ async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
     }
 
     try {
+        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(orderId);
         let order = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-            const { data: o } = await supabase
-                .from('orders')
-                .select('*')
-                .or(`id.eq.${orderId},order_number.eq.${orderId}`)
-                .maybeSingle();
 
-            if (o) {
-                order = o;
-                break;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (isUuid) {
+                const { data: o } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+                if (o) { order = o; break; }
             }
+            // Also try matching by order_number
+            const { data: oByNum } = await supabase.from('orders').select('*').eq('order_number', orderId).maybeSingle();
+            if (oByNum) { order = oByNum; break; }
+
             // Wait 1.5s for database indexing if order was just created
             await new Promise((resolve) => setTimeout(resolve, 1500));
         }
@@ -390,7 +390,7 @@ async function sendOrderConfirmationWhatsApp(orderId, isManualTrigger = false) {
                 .eq('id', order.user_id)
                 .maybeSingle();
 
-            if (!userProfile?.whatsapp_confirmation_enabled) {
+            if (!userProfile || !userProfile.whatsapp_confirmation_enabled) {
                 console.log(`⚠️ WhatsApp confirmation is DISABLED for user ${order.user_id}. Skipping automatic message.`);
                 return { success: false, reason: 'Disabled for user' };
             }
@@ -555,7 +555,23 @@ async function autoCheckUnsentOrders() {
         if (error || !recentOrders || recentOrders.length === 0) return;
 
         for (const order of recentOrders) {
-            const isEnabled = order.profiles?.whatsapp_confirmation_enabled;
+            let isEnabled = false;
+            if (Array.isArray(order.profiles)) {
+                isEnabled = Boolean(order.profiles[0]?.whatsapp_confirmation_enabled);
+            } else if (order.profiles) {
+                isEnabled = Boolean(order.profiles.whatsapp_confirmation_enabled);
+            }
+
+            // Fallback: Check profile directly if relation query didn't return profile
+            if (!isEnabled && order.user_id) {
+                const { data: p } = await supabase
+                    .from('profiles')
+                    .select('whatsapp_confirmation_enabled')
+                    .eq('id', order.user_id)
+                    .maybeSingle();
+                if (p?.whatsapp_confirmation_enabled) isEnabled = true;
+            }
+
             if (!isEnabled) continue;
 
             const { data: existingMsg } = await supabase
