@@ -345,12 +345,82 @@ async function startWhatsAppBot() {
                         status: 'sent'
                     });
                 }
+            } else if (!isConfirm && !isCancel) {
+                // Intelligent AI Customer Support Auto-Reply
+                let activeOrder = null;
+                if (orderId) {
+                    const { data: o } = await supabase
+                        .from('orders')
+                        .select('*, products(name)')
+                        .eq('id', orderId)
+                        .maybeSingle();
+                    activeOrder = o;
+                }
+
+                const aiReplyText = generateAICustomerResponse(incomingText, activeOrder);
+                console.log(`🤖 AI Auto-Reply to ${remoteJid}: "${aiReplyText}"`);
+
+                await waSock.sendMessage(remoteJid, { text: aiReplyText });
+
+                if (chatId) {
+                    await supabase.from('whatsapp_messages').insert({
+                        chat_id: chatId,
+                        order_id: orderId || null,
+                        sender: 'bot',
+                        message_type: 'text',
+                        message_text: aiReplyText,
+                        status: 'sent'
+                    });
+
+                    await supabase.from('whatsapp_chats').update({
+                        last_message: aiReplyText,
+                        last_message_at: new Date().toISOString()
+                    }).eq('id', chatId);
+                }
             }
-            // Note: For normal conversation messages, no auto reply template is sent!
         } catch (err) {
             console.error('Error handling incoming WhatsApp message:', err);
         }
     });
+}
+
+// AI Customer Support Response Generator
+function generateAICustomerResponse(incomingText, order) {
+    const text = (incomingText || '').toLowerCase().trim();
+    const customerName = order?.customer_name || 'Valued Customer';
+    const orderNum = order?.order_number || (order?.id ? order.id.slice(0, 6) : 'N/A');
+    const productName = order?.products?.name || 'your product';
+    const amount = order?.cod_amount || order?.payable_amount || 0;
+    const city = order?.city || order?.emirate || 'UAE';
+    const status = order?.status || 'Pending';
+
+    // Intent 1: Greetings
+    if (/^(hi|hello|hey|slam|salam|hola|good morning|good evening|aoa)/.test(text)) {
+        return `Hello ${customerName}! 👋 Thank you for contacting Deserts. How can we assist you with order #${orderNum} (${productName}) today?`;
+    }
+
+    // Intent 2: Delivery & Shipping Status
+    if (/deliv|ship|when|time|day|kab|arriva|track|parcel|rider|dispatch/.test(text)) {
+        return `Hello ${customerName}! 🚚 Order #${orderNum} status is currently *${status}*. Delivery across ${city} takes 2-4 business days via Cash on Delivery. Our rider will contact you prior to delivery!`;
+    }
+
+    // Intent 3: Price, Discount & COD Amount
+    if (/price|amount|cost|cod|discount|pay|rupee|dirham|aed|kam|rate/.test(text)) {
+        return `Hello ${customerName}! 💰 The total Cash on Delivery (COD) amount for order #${orderNum} is *${amount} AED*. Our delivery rider will collect this exact amount upon delivery.`;
+    }
+
+    // Intent 4: Address or Location
+    if (/address|location|city|place|pata|change/.test(text)) {
+        return `Hello ${customerName}! 📍 Your delivery location is registered as *${city}*. If you wish to update your full delivery address, please reply with your new complete address here.`;
+    }
+
+    // Intent 5: Human Agent / Help
+    if (/agent|human|admin|call|phone|talk|help|support/.test(text)) {
+        return `Hello ${customerName}! 👤 Our support team has been notified of your message. An agent will review your chat and assist you shortly.`;
+    }
+
+    // Default Smart AI Response
+    return `Hello ${customerName}! 👋 We received your message regarding order #${orderNum} (${productName}). We have noted your request and our support team will assist you shortly!`;
 }
 
 // Lock Set to prevent concurrent duplicate message sending for the same order
@@ -665,6 +735,38 @@ app.post('/send-order-message', async (req, res) => {
     const isManualTrigger = isManual !== undefined ? Boolean(isManual) : true;
     const result = await sendOrderConfirmationWhatsApp(orderId, isManualTrigger);
     res.json(result);
+});
+
+// Send Automated Onboarding Welcome WhatsApp Message to Newly Registered Seller
+app.post('/send-onboarding-message', async (req, res) => {
+    const { phone, fullName, email } = req.body;
+    if (!phone || !fullName) {
+        return res.status(400).json({ error: 'phone and fullName are required' });
+    }
+
+    if (!waSock || !isConnected) {
+        return res.status(503).json({ error: 'WhatsApp Bot not connected' });
+    }
+
+    try {
+        const jid = await resolveJid(phone);
+        if (!jid) return res.status(400).json({ error: 'Invalid phone number format' });
+
+        const welcomeText =
+            `🎉 *Welcome to Deserts Dropshipping, ${fullName}!* 🚀\n\n` +
+            `Thank you for registering your seller account (${email || 'registered email'}).\n\n` +
+            `📋 Your application has been received and is currently under review by our team.\n` +
+            `We will notify you once your account is approved and ready to process orders.\n\n` +
+            `Happy Selling! 💼✨`;
+
+        console.log(`📤 Sending WhatsApp Onboarding Welcome Message to ${jid}...`);
+        await waSock.sendMessage(jid, { text: welcomeText });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error sending onboarding WhatsApp message:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Admin Manual Reply via WhatsApp Modal
