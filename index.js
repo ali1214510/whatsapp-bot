@@ -769,6 +769,49 @@ app.post('/send-onboarding-message', async (req, res) => {
     }
 });
 
+// Send Automated Account Approval / Disapproval Status WhatsApp Message to Seller
+app.post('/send-account-status-message', async (req, res) => {
+    const { phone, fullName, email, storeName, status } = req.body;
+    if (!phone || !fullName || !status) {
+        return res.status(400).json({ error: 'phone, fullName, and status are required' });
+    }
+
+    if (!waSock || !isConnected) {
+        return res.status(503).json({ error: 'WhatsApp Bot not connected' });
+    }
+
+    try {
+        const jid = await resolveJid(phone);
+        if (!jid) return res.status(400).json({ error: 'Invalid phone number format' });
+
+        let messageText = '';
+        const isApproved = status.toLowerCase() === 'approved';
+
+        if (isApproved) {
+            messageText =
+                `🎉 *Congratulations, ${fullName}!* 🚀\n\n` +
+                `Your seller account for *${storeName || 'Deserts Dropshipping'}* has been *APPROVED*! ✅\n\n` +
+                `You can now log in to the portal and start listing products and placing orders.\n\n` +
+                `Portal URL: https://system.desertsdropshipper.com/\n\n` +
+                `Happy Selling! 💼✨`;
+        } else {
+            messageText =
+                `⚠️ *Account Status Notice*\n\n` +
+                `Hello ${fullName}, your seller account for *${storeName || 'Deserts Dropshipping'}* status has been updated to *${status.toUpperCase()}*.\n\n` +
+                `If you have any questions or need assistance, please contact portal admin.\n\n` +
+                `Thank you!`;
+        }
+
+        console.log(`📤 Sending Account Status WhatsApp Message (${status}) to ${jid}...`);
+        await waSock.sendMessage(jid, { text: messageText });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error sending account status WhatsApp message:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Admin Manual Reply via WhatsApp Modal
 app.post('/send-manual-message', async (req, res) => {
     const { orderId, phone, message } = req.body;
