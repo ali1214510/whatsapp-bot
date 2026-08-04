@@ -892,6 +892,62 @@ app.post('/send-account-status-message', async (req, res) => {
     }
 });
 
+// Bulk Send Account Approval / Disapproval WhatsApp Messages to Sellers (with rate-limiting delay)
+app.post('/send-bulk-account-status', async (req, res) => {
+    const { users, status } = req.body;
+    if (!Array.isArray(users) || !status) {
+        return res.status(400).json({ error: 'users array and status are required' });
+    }
+
+    if (!waSock || !isConnected) {
+        return res.status(503).json({ error: 'WhatsApp Bot not connected' });
+    }
+
+    // Respond immediately so frontend doesn't hang
+    res.json({ success: true, count: users.length, message: 'Processing bulk WhatsApp messages in background' });
+
+    // Process sequentially in background with 600ms delay between messages
+    (async () => {
+        console.log(`📢 Starting Bulk WhatsApp Status Notifications for ${users.length} sellers (Status: ${status})...`);
+        for (const user of users) {
+            if (!user.phone && !user.whatsapp_number) continue;
+            const phone = user.phone || user.whatsapp_number;
+            const fullName = user.fullName || user.full_name || 'Seller';
+            const storeName = user.storeName || user.store_name || 'Deserts Dropshipping';
+
+            try {
+                const jid = await resolveJid(phone);
+                if (!jid) continue;
+
+                let messageText = '';
+                const isApproved = status.toLowerCase() === 'approved';
+
+                if (isApproved) {
+                    messageText =
+                        `🎉 *Congratulations, ${fullName}!* 🚀\n\n` +
+                        `Your seller account for *${storeName}* has been *APPROVED*! ✅\n\n` +
+                        `You can now log in to the portal and start listing products and placing orders.\n\n` +
+                        `Portal URL: https://system.desertsdropshipper.com/\n\n` +
+                        `Happy Selling! 💼✨`;
+                } else {
+                    messageText =
+                        `⚠️ *Account Status Notice*\n\n` +
+                        `Hello ${fullName}, your seller account for *${storeName}* status has been updated to *${status.toUpperCase()}*.\n\n` +
+                        `If you have any questions or need assistance, please contact portal admin.\n\n` +
+                        `Thank you!`;
+                }
+
+                console.log(`📤 [Bulk] Sending WhatsApp message (${status}) to ${fullName} (${jid})...`);
+                await waSock.sendMessage(jid, { text: messageText });
+                await new Promise(r => setTimeout(r, 600)); // 600ms delay between messages
+            } catch (err) {
+                console.error(`Error sending bulk WhatsApp message to ${fullName}:`, err.message);
+            }
+        }
+        console.log(`✅ Completed Bulk WhatsApp Status Notifications for ${users.length} sellers.`);
+    })();
+});
+
 // Admin Manual Reply via WhatsApp Modal
 app.post('/send-manual-message', async (req, res) => {
     const { orderId, phone, message } = req.body;
