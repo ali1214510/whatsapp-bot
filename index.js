@@ -114,13 +114,25 @@ async function startWhatsAppBot() {
         if (connection === 'close') {
             isConnected = false;
             botUserJid = null;
+            qrCodeData = null;
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 401;
             console.log(`⚠️ Connection closed (reason code: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+
             if (shouldReconnect) {
                 setTimeout(startWhatsAppBot, 3000);
             } else {
-                console.log('❌ Logged out of WhatsApp. Restart server to re-scan QR code.');
+                console.log('❌ Logged out or session expired. Clearing old auth credentials to regenerate fresh QR code...');
+                try {
+                    import('fs').then(fs => {
+                        if (fs.existsSync('./auth_info_baileys')) {
+                            fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
+                        }
+                    });
+                } catch (e) {
+                    console.error('Error clearing auth directory:', e);
+                }
+                setTimeout(startWhatsAppBot, 2000);
             }
         }
     });
@@ -691,13 +703,78 @@ app.get('/status', (req, res) => {
     });
 });
 
+app.get('/reset-session', async (req, res) => {
+    try {
+        isConnected = false;
+        qrCodeData = null;
+        if (waSock) {
+            try { waSock.end(); } catch (e) {}
+        }
+        const fs = await import('fs');
+        if (fs.existsSync('./auth_info_baileys')) {
+            fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
+        }
+        console.log('🔄 Session reset manually by admin via /reset-session');
+        setTimeout(startWhatsAppBot, 1500);
+        res.send(`
+            <html>
+                <head>
+                    <meta http-equiv="refresh" content="3;url=/qr" />
+                    <style>body { font-family: system-ui, sans-serif; text-align: center; padding: 50px; background: #f8fafc; }</style>
+                </head>
+                <body>
+                    <h2 style="color:#0284c7;">🔄 Resetting WhatsApp session...</h2>
+                    <p>Generating a fresh QR code. Redirecting in 3 seconds...</p>
+                    <p><a href="/qr" style="color:#0284c7; font-weight:bold;">Click here if not redirected automatically</a></p>
+                </body>
+            </html>
+        `);
+    } catch (err) {
+        console.error('Reset session error:', err);
+        res.status(500).send('Reset error: ' + err.message);
+    }
+});
+
 app.get('/qr', (req, res) => {
     if (isConnected) {
-        return res.send('<h2 style="font-family:sans-serif;color:green;padding:20px;">✅ WhatsApp Bot is already connected!</h2>');
+        return res.send(`
+            <html>
+                <head>
+                    <title>Deserts WhatsApp Bot - Connected</title>
+                    <style>body { font-family: system-ui, sans-serif; text-align: center; padding: 50px; background: #f8fafc; }</style>
+                </head>
+                <body>
+                    <div style="background: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 10px 30px rgba(0,0,0,0.08);">
+                        <h2 style="color:#16a34a; margin-bottom:10px;">✅ WhatsApp Bot is Connected!</h2>
+                        <p style="color:#64748b;">Bot is active and ready to deliver messages and auto-replies.</p>
+                        <br/>
+                        <a href="/reset-session" style="padding:10px 20px; background:#ef4444; color:white; border-radius:10px; text-decoration:none; font-weight:bold; font-size:13px;">🔄 Disconnect & Re-scan New QR Code</a>
+                    </div>
+                </body>
+            </html>
+        `);
     }
+
     if (!qrCodeData) {
-        return res.send('<h2 style="font-family:sans-serif;color:orange;padding:20px;">⌛ Initializing QR Code... Please refresh in 3 seconds.</h2>');
+        return res.send(`
+            <html>
+                <head>
+                    <meta http-equiv="refresh" content="3" />
+                    <title>Initializing QR Code</title>
+                    <style>body { font-family: system-ui, sans-serif; text-align: center; padding: 50px; background: #f8fafc; }</style>
+                </head>
+                <body>
+                    <div style="background: white; padding: 40px; border-radius: 20px; display: inline-block; box-shadow: 0 10px 30px rgba(0,0,0,0.08);">
+                        <h2 style="color:#ea580c; margin-bottom:10px;">⌛ Initializing QR Code...</h2>
+                        <p style="color:#64748b;">Starting WhatsApp engine. Page reloads automatically in 3 seconds...</p>
+                        <br/>
+                        <a href="/reset-session" style="padding:10px 20px; background:#ef4444; color:white; border-radius:10px; text-decoration:none; font-weight:bold; font-size:13px;">🔄 Force Reset Session & Generate New QR</a>
+                    </div>
+                </body>
+            </html>
+        `);
     }
+
     res.send(`
         <html>
             <head>
@@ -705,16 +782,19 @@ app.get('/qr', (req, res) => {
                 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
                 <style>
                     body { font-family: system-ui, sans-serif; text-align: center; padding: 40px; background: #f8fafc; }
-                    .card { background: white; padding: 30px; border-radius: 16px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.08); }
+                    .card { background: white; padding: 30px; border-radius: 20px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.08); }
                     canvas { margin: 20px 0; }
                 </style>
             </head>
             <body>
                 <div class="card">
-                    <h2 style="color:#0f766e;">📱 Connect Deserts WhatsApp Bot</h2>
+                    <h2 style="color:#0f766e; margin-bottom: 5px;">📱 Connect Deserts WhatsApp Bot</h2>
                     <p style="color:#64748b;">Scan this QR code using WhatsApp on your phone (Linked Devices):</p>
                     <canvas id="canvas"></canvas>
                     <p style="font-size:12px;color:#94a3b8;">Page auto-refreshes every 10 seconds</p>
+                    <div style="margin-top:15px;">
+                        <a href="/reset-session" style="padding:8px 16px; background:#ef4444; color:white; border-radius:8px; text-decoration:none; font-weight:bold; font-size:12px;">🔄 Generate New QR Code</a>
+                    </div>
                 </div>
                 <script>
                     QRCode.toCanvas(document.getElementById('canvas'), "${qrCodeData}", { width: 260 }, function (error) {
